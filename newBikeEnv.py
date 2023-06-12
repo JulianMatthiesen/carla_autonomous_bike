@@ -40,7 +40,7 @@ class BikeEnv(gym.Env):
         ])
 
         low = np.array([
-            0.0,   # throttle bike
+            -1.0,   # throttle bike
             -1.0   # steer bike
         ])
 
@@ -89,7 +89,7 @@ class BikeEnv(gym.Env):
 
 
     def step(self, action):
-        throttle = float(action[0])
+        throttle = float((action[0] + 1)/ 2)
         steer=float(action[1])
         self.bike.apply_control(carla.VehicleControl(throttle=throttle, steer=steer))
 
@@ -112,7 +112,8 @@ class BikeEnv(gym.Env):
         return self.get_observation(), self.reward, self.terminated, self.info
 
     def reset(self):
-        
+        if not len(self.world.get_actors()) == 0:
+            self.bike.destroy()
         spawn_point = self.get_random_point()
         self.bike = self.world.try_spawn_actor(self.bike_bp, spawn_point)
         self.bike_location = spawn_point
@@ -124,7 +125,18 @@ class BikeEnv(gym.Env):
         self.world.tick()
         return self.get_observation() #info
 
+    def close(self):
+        self.bike.destroy()
+        settings = self.world.get_settings()
+        settings.synchronous_mode = False
+        self.world.apply_settings(settings)
+         
+        self.world.tick()
 
+    """
+    def render(self):
+        ...
+    """
 # ================== Hilfsmethoden ==================
 
     
@@ -169,14 +181,5 @@ class BikeEnv(gym.Env):
         return carla.Location(x=xTarget, y=yTarget, z=2)
         
 
-    def close(self):
-        self.bike.destroy()
-        settings = self.world.get_settings()
-        settings.synchronous_mode = False
-        self.world.apply_settings(settings)
-         
-        self.world.tick()
-"""
-    def render(self):
-        ...
-"""
+    
+
