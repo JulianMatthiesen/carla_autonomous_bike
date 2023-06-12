@@ -175,6 +175,7 @@ class BikeEnv(gym.Env):
         settings.synchronous_mode = False
         self.world.apply_settings(settings)
         
+        self.world.tick()
 
 """
     def render(self):
