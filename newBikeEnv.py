@@ -70,7 +70,7 @@ class BikeEnv(gym.Env):
         
         self.bike_bp = blueprint_library.find("vehicle.diamondback.century")
 
-        # synchonous mode und Fixed time-step später wichtig für synchrone Sensoren
+        # synchronous mode und Fixed time-step später wichtig für synchrone Sensoren
         settings = self.world.get_settings()
         settings.synchronous_mode = True  
         settings.fixed_delta_seconds = 0.05

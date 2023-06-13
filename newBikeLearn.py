@@ -27,7 +27,7 @@ model.learn(total_timesteps=TIMESTEPS)
 #check model performance:
 obs = env.reset()
 
-for _ in range(100):
+for _ in range(1000):
     action, _ = model.predict(obs)
     obs, reward, done, info = env.step(action)
     print(done)
