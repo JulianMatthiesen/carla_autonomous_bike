@@ -49,16 +49,18 @@ class BikeEnv(gym.Env):
         high = np.array([
             14, -129,    # position bike(x,y)
             14, -129,    # position target(x,y)
-            180          # rotation bike 
+            180,         # rotation bike 
+            27.5         # distance 
         ])
 
         low = np.array([
             -8.75, -144, # position bike(x,y)
             -8.75, -144, # position target(x,y)
-            -180         # rotation bike 
+            -180,         # rotation bike 
+            0            # distance 
         ])
 
-        self.observation_space = spaces.Box(low=low, high=high, shape=(5,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=low, high=high, shape=(6,), dtype=np.float32)
 
 
         self.client = carla.Client('localhost', 2000)
@@ -79,9 +81,12 @@ class BikeEnv(gym.Env):
 
         spawn_point = self.get_random_point()
         self.bike = self.world.spawn_actor(self.bike_bp, spawn_point)
-        self.bike_location = spawn_point
+        self.bike_location = spawn_point.location
         self.target_location = self.set_new_target()
-
+        self.done = False
+        self.reward = 0
+        self.tick_count = 0
+        self.max_time_steps = 2500
         self.world.tick()
 
         self.info = {"actions": []}
@@ -95,32 +100,51 @@ class BikeEnv(gym.Env):
 
         # update bike_location
         self.bike_location = self.bike.get_transform().location
-        distance = self.get_distance_to_target()
+        current_distance = self.get_distance_to_target()
 
-        # if target reached -> reward and calculate new target 
+        # if target reached -> reward for finding, reset time_reward 
+        # and calculate new target 
         reward_for_target = 0
-        if distance < 0.5:
+        if current_distance < 3:
             self.target_location = self.set_new_target()
-            reward_for_target = 100
+            reward_for_target = 500
+            self.tick_count = 0
+            print("target reached")
+        #reduce reward for finding target quickly
+        self.time_reward = 250 - 2*self.tick_count
 
-        self.terminated, reward_for_distance = self.get_reward(distance)      
-        self.reward = reward_for_distance + reward_for_target
+        self.reward = self.prev_distance - current_distance + reward_for_target + self.time_reward
+        self.prev_distance = current_distance
+
+        # negative reward and stop episode, when leaving the square
+        if not self.XMIN <= self.bike_location.x <= self.XMAX or not self.YMIN <= self.bike_location.y <= self.YMAX:
+            self.done = True
+            self.reward = -250
 
         self.world.tick()
+        self.tick_count += 1
+        if self.tick_count >= self.max_time_steps:
+            self.done = True
+            self.reward = -250
         
         self.info["actions"].append(action.tolist())
-        return self.get_observation(), self.reward, self.terminated, self.info
+        return self.get_observation(), self.reward, self.done, self.info
 
     def reset(self):
         if not len(self.world.get_actors()) == 0:
             self.bike.destroy()
         spawn_point = self.get_random_point()
         self.bike = self.world.try_spawn_actor(self.bike_bp, spawn_point)
-        self.bike_location = spawn_point
+        self.bike_location = spawn_point.location
 
         # set target at random location within square
         self.target_location = self.set_new_target()
         
+        self.prev_distance = self.get_distance_to_target()
+        self.done = False
+        self.reward = 0
+        self.tick_count = 0
+        self.time_reward = 0
         self.info = {"actions": []}
         self.world.tick()
         return self.get_observation() #info
@@ -145,18 +169,12 @@ class BikeEnv(gym.Env):
         xSpawn = random.uniform(self.XMIN, self.XMAX)
         ySpawn = random.uniform(self.YMIN, self.YMAX)
         location = carla.Location(x=xSpawn, y=ySpawn, z=5)
-        random_point = carla.Transform(location, carla.Rotation())
+        phiSpawn = random.uniform(-180, 180)
+        rotation = carla.Rotation(pitch=0.0, yaw=phiSpawn, roll=0.0)
+        random_point = carla.Transform(location, rotation)
         return random_point
     
-    def get_reward(self, distance):
-        # negative reward and stop episode, when leaving the square
-        if not self.XMIN <= self.bike_location.x <= self.XMAX or not self.YMIN <= self.bike_location.y <= self.YMAX:
-            terminated = True
-            reward = -50
-        else:
-            terminated = False
-            reward = (27.25 - distance) # maximum minus actual distance
-        return terminated, reward
+   
     
     def get_observation(self):
         bike_transform = self.bike.get_transform()
@@ -164,7 +182,8 @@ class BikeEnv(gym.Env):
         current_location = [get_current_location.x, get_current_location.y]
         current_rotation = [bike_transform.rotation.yaw]
         target_location = [self.target_location.x, self.target_location.y]
-        observation = current_location + target_location + current_rotation
+        dist = [self.get_distance_to_target()]
+        observation = current_location + target_location + current_rotation + dist
         observation = np.array(observation, dtype=np.float32)
         return observation
 
