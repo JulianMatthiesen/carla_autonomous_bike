@@ -111,7 +111,7 @@ class BikeEnv(gym.Env):
             self.tick_count = 0
             print("target reached")
         #reduce reward for finding target quickly
-        self.time_reward = 250 - 2*self.tick_count
+        self.time_reward = -10
 
         self.reward = self.prev_distance - current_distance + reward_for_target + self.time_reward
         self.prev_distance = current_distance
