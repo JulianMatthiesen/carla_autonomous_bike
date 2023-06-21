@@ -21,13 +21,11 @@ obs = env.reset()
 model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=logdir)
 
 TIMESTEPS=10000
-model.learn(total_timesteps=TIMESTEPS)
-
 
 #check model performance:
 
 
-for i in range(1, 30):
+for i in range(1, 100):
     model.learn(total_timesteps=TIMESTEPS, reset_num_timesteps=False, tb_log_name="PPO")
     model.save(f"{models_dir}/{TIMESTEPS*i}")
 
