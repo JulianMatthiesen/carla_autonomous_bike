@@ -125,6 +125,7 @@ class BikeEnv(gym.Env):
         self.prev_distance = self.get_distance_to_target()
         self.done = False
         self.reward = 0
+        print("tick_count: " + str(self.tick_count))
         self.tick_count = 0
         self.info = {"actions": []}
         self.world.tick()
@@ -190,7 +191,7 @@ class BikeEnv(gym.Env):
         #penalty for speeds below 10kmh
         v = self.bike.get_velocity()
         kmh = int(3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2))
-        speed_penalty = -5 if kmh < 10 else 0
+        speed_penalty = -5 if kmh < 5 else 0
 
         # if target reached -> reward for finding
         # and calculate new target 
