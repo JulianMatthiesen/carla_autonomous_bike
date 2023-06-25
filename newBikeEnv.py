@@ -180,8 +180,12 @@ class BikeEnv(gym.Env):
         # zu sein, ohne das Viereck zu verlassen
         xTarget = random.uniform(self.XMIN + 2, self.XMAX - 2)
         yTarget = random.uniform(self.YMIN + 2, self.YMAX - 2)
-        return carla.Location(x=xTarget, y=yTarget, z=0.0)
-        
+        new_target = carla.Location(x=xTarget, y=yTarget, z=0.0)
+        self.world.debug.draw_string(new_target, "X", draw_shadow=False,
+                                        color=carla.Color(r=255, g=0, b=0), life_time=2,
+                                        persistent_lines=True)
+        return new_target
+    
     def calculate_reward(self):
         current_distance = self.get_distance_to_target()
 
@@ -200,9 +204,6 @@ class BikeEnv(gym.Env):
             reward_for_target = 100
             time_penalty = 0
             self.tick_count = 0
-            self.world.debug.draw_string(self.target_location, "X", draw_shadow=False,
-                                        color=carla.Color(r=255, g=0, b=0), life_time=2,
-                                        persistent_lines=True)
             print("target reached")
 
         reward = (self.DISCOUNT**self.tick_count) * ((self.prev_distance - current_distance) * 1000 + reward_for_target + time_penalty + speed_penalty) 
