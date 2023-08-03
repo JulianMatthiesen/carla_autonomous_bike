@@ -92,7 +92,7 @@ class BikeEnv(gym.Env):
         self.done = False
         self.reward = 0
         self.tick_count = 0
-        self.max_time_steps = 4000
+        self.max_time_steps = 2000
         self.world.tick()
 
         self.info = {"actions": []}
@@ -162,11 +162,11 @@ class BikeEnv(gym.Env):
     def get_observation(self):
         bike_transform = self.bike.get_transform()
         get_current_location = bike_transform.location
-        current_location = [get_current_location.x, get_current_location.y]
-        current_rotation = [bike_transform.rotation.yaw]
-        target_location = [self.target_location.x, self.target_location.y]
-        dist = [self.get_distance_to_target()]
-        observation = current_location + target_location + current_rotation + dist
+        observated_location = [get_current_location.x, get_current_location.y]
+        observated_rotation = [bike_transform.rotation.yaw]
+        observated_target_location = [self.target_location.x, self.target_location.y]
+        observated_dist = [self.get_distance_to_target()]
+        observation = observated_location + observated_target_location + observated_rotation + observated_dist
         observation = np.array(observation, dtype=np.float32)
         return observation
 

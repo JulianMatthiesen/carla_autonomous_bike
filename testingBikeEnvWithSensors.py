@@ -49,8 +49,9 @@ class BikeEnv(gym.Env):
 
         image_width = 800
         image_height = 600
-        self.observation_space = spaces.Box(low=0, high=1, shape=(image_height, image_width), dtype=np.float32)
 
+        # neural Networks prefer Inputs between 0 and 1 or -1 and 1 or sth like that -> sentdex
+        self.observation_space = spaces.Box(low=0, high=1, shape=(image_height, image_width), dtype=np.float32)
 
         self.client = carla.Client('localhost', 2000)
         self.client.set_timeout(20.0)
@@ -60,7 +61,7 @@ class BikeEnv(gym.Env):
         self.bp_lib = self.world.get_blueprint_library()
 
 
-        self.bike, self.depth_sensor = self.spawn_bike()
+        self.bike, self.depth_sensor, self.collision_sensor = self.spawn_bike()
 
         # synchronous mode und Fixed time-step später wichtig für synchrone Sensoren
         settings = self.world.get_settings()
@@ -82,7 +83,7 @@ class BikeEnv(gym.Env):
         self.tick_count = 0
         self.max_time_steps = 4000
         self.world.tick()
-
+        self.sensor_data = None
         self.info = {"actions": []}
 
     def step(self, action):
@@ -102,9 +103,14 @@ class BikeEnv(gym.Env):
         if not len(self.world.get_actors()) == 0:
             self.bike.destroy()
             self.depth_sensor.destroy()
+            self.collision_sensor.destroy()
 
-        self.bike, self.depth_sensor = self.spawn_bike()
+
+        self.bike, self.depth_sensor, self.collision_sensor = self.spawn_bike()
         
+        while self.front_camera is None: 
+            time.sleep(0.01) # warten bis die front camera das erste Bild liefert
+
         # set target at random location within square
         self.target_location = self.set_new_target()
         self.world.debug.draw_string(self.target_location, "X", draw_shadow=False,
@@ -147,9 +153,20 @@ class BikeEnv(gym.Env):
                     
         image_w = depth_sensor_bp.get_attribute("image_size_x").as_int()
         image_h = depth_sensor_bp.get_attribute("image_size_y").as_int()
-        camera_data = {'depth_image': np.zeros((image_h, image_w, 4))}
-        depth_sensor.listen(lambda image: self.depth_callback(image, camera_data))
-        return bike, depth_sensor
+        self.sensor_data = {'depth_image': np.zeros((image_h, image_w, 4)),
+                       'collision': False}
+        
+        depth_sensor.listen(lambda image: self.depth_callback(image, self.sensor_data))
+
+        collision_sensor = self.world.spawn_actor(
+            self.world.get_blueprint_library().find('sensor.other.collision'),
+            carla.Transform(), attach_to=bike)
+        collision_sensor.listen(lambda event: self.collision_callback(event, self.sensor_data))
+
+        return bike, depth_sensor, collision_sensor
+    
+    def collision_callback(event, data_dict):
+        data_dict["collision"] = True
 
     def depth_callback(self, image, data_dict):
         image.convert(carla.ColorConverter.LogarithmicDepth)
@@ -207,7 +224,11 @@ class BikeEnv(gym.Env):
                                         persistent_lines=True)
             print("target reached")
 
-        reward = (self.DISCOUNT**self.tick_count) * ((self.prev_distance - current_distance) * 1000 + reward_for_target + time_penalty + speed_penalty) 
+        if self.sensor_data["collision"] == True: 
+            self.done = True
+            collision_reward = -100
+
+        reward = (self.DISCOUNT**self.tick_count) * (collision_reward + time_penalty + speed_penalty) 
         self.prev_distance = current_distance
         
         # negative reward and stop episode, when leaving the square
