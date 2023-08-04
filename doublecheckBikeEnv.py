@@ -1,4 +1,4 @@
-from newBikeEnv import BikeEnv
+from SensorsBikeEnv import BikeEnv
 
 env = BikeEnv()
 episodes = 3
