@@ -1,7 +1,7 @@
 import gym
 from stable_baselines3 import  PPO
 import os
-from BikeEnv import BikeEnv
+from SensorsBikeEnv import BikeEnv
 import time
 
 
