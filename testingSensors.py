@@ -7,7 +7,7 @@ import cv2
 client = carla.Client('localhost', 2000)
 client.set_timeout(5.0)
 world = client.get_world()
-#world = client.load_world('Town03_Opt', carla.MapLayer.Buildings | carla.MapLayer.ParkedVehicles)
+world = client.load_world('Town03_Opt', carla.MapLayer.Buildings | carla.MapLayer.ParkedVehicles)
 #world.unload_map_layer(carla.MapLayer.All)
 client.reload_world(False)
 time.sleep(1)
@@ -26,7 +26,7 @@ if actor_list is not None:
 
 #spawn vehicle
 vehicle_bp = bp_lib.find("vehicle.diamondback.century")
-transform = carla.Transform(carla.Location(x=-25.661824, y=-55.620903, z=0.1), carla.Rotation(yaw=0))
+transform = carla.Transform(carla.Location(x=-25.661824, y=-55.620903, z=0.1), carla.Rotation(yaw=180))
 vehicle = world.try_spawn_actor(vehicle_bp, transform)
 
 
@@ -36,7 +36,7 @@ spectator = world.get_spectator()
 transform = carla.Transform(vehicle.get_transform().transform(carla.Location(x=-4, z=2)),vehicle.get_transform().rotation) 
 spectator.set_transform(transform)
 
-#vehicle.apply_control(carla.VehicleControl(throttle=0.2))
+vehicle.apply_control(carla.VehicleControl(throttle=0.5))
 
 camera_bp = bp_lib.find('sensor.camera.depth') 
 camera_bp.set_attribute("fov", "130")
@@ -45,7 +45,9 @@ camera_bp.set_attribute("image_size_y", "32")
 depth_camera_1_init_trans = carla.Transform(carla.Location(x=0.5, z=0.95))
 #depth_camera_2_init_trans = carla.Transform(carla.Location(x=0.5, y=0.2, z=0.95), carla.Rotation(yaw=90))
 #depth_camera_3_init_trans = carla.Transform(carla.Location(x=0.5, y=-0.2, z=0.95), carla.Rotation(yaw=-90))
+collision_bp = bp_lib.find('sensor.other.collision')
 
+collision_sensor = world.spawn_actor(collision_bp, carla.Transform(), attach_to=vehicle)
 depth_camera_1 = world.spawn_actor(camera_bp, depth_camera_1_init_trans, attach_to = vehicle)
 #depth_camera_2 = world.spawn_actor(camera_bp, depth_camera_2_init_trans, attach_to = vehicle)
 #depth_camera_3 = world.spawn_actor(camera_bp, depth_camera_3_init_trans, attach_to = vehicle)
@@ -74,11 +76,15 @@ def depth_callback_3(image, data_dict):
     image.convert(carla.ColorConverter.LogarithmicDepth)
     data_dict["depth_image_3"] = np.reshape(np.copy(image.raw_data), (image.height, image.width, 4))
 
+def collision_callback(event, data_dict):
+    data_dict['collision'] = True
+
 # Get camera dimensions and initialise dictionary                       
 image_w = camera_bp.get_attribute("image_size_x").as_int()
 image_h = camera_bp.get_attribute("image_size_y").as_int()
 camera_data = {'depth_image_1': np.zeros((image_h, image_w, 4)),
                 'depth_image_2': np.zeros((image_h, image_w, 4)),
+                'collision': False,
                 'depth_image_3': np.zeros((image_h, image_w, 4))}
 
 # für observation space
@@ -89,6 +95,7 @@ print(image_w)
 depth_camera_1.listen(lambda image: depth_callback_1(image, camera_data))
 #depth_camera_2.listen(lambda image: depth_callback_2(image, camera_data))
 #depth_camera_3.listen(lambda image: depth_callback_3(image, camera_data))
+collision_sensor.listen(lambda event: collision_callback(event, camera_data))
 
 
 cv2.namedWindow('Depth Camera', cv2.WINDOW_AUTOSIZE)
@@ -122,10 +129,12 @@ while True:
 depth_camera_1.stop()
 #depth_camera_2.stop()
 #depth_camera_3.stop()
+collision_sensor.stop()
 
 depth_camera_1.destroy()
 #depth_camera_2.destroy()
 #depth_camera_3.destroy()
+collision_sensor.destroy()
 
 cv2.destroyAllWindows()
 

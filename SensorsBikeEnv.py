@@ -47,12 +47,15 @@ class BikeEnv(gym.Env):
 
         self.action_space = spaces.Box(low=low, high=high, shape=(2,), dtype=np.float32)
 
-        image_width = 32
-        image_height = 32
+        # The minimal resolution for an image is 36x36 for the default `CnnPolicy`
+        # -> otherwise custom features extractor
+        image_width = 36
+        image_height = 36
+        num_channels = 4
 
         # neural Networks prefer Inputs between 0 and 1 or -1 and 1 or sth like that -> sentdex
-        # 0 ist tatsächlich nicht der niedrigste Wert, sondern 1/255
-        self.observation_space = spaces.Box(low=0, high=1, shape=(image_height, image_width), dtype=np.float32)
+        # CNN policy normalizes the observation automatically
+        self.observation_space = spaces.Box(low=0, high=255, shape=(image_height, image_width, num_channels), dtype=np.uint8)
 
 
 
@@ -62,7 +65,7 @@ class BikeEnv(gym.Env):
         time.sleep(1)
         self.bp_lib = self.world.get_blueprint_library()
 
-        self.sensor_data = None
+        self.sensor_data = {}
         self.bike, self.depth_sensor, self.collision_sensor = self.spawn_bike()
 
         # synchronous mode und Fixed time-step später wichtig für synchrone Sensoren
@@ -79,8 +82,6 @@ class BikeEnv(gym.Env):
         spectator.set_transform(transform)
 
         self.front_camera=None
-        self.bike_location = self.bike.get_transform().location
-        self.target_location = self.set_new_target()
         self.done = False
         self.reward = 0
         self.tick_count = 0
@@ -140,31 +141,29 @@ class BikeEnv(gym.Env):
     def spawn_bike(self):
         # spawn bike
         bike_bp = self.bp_lib.find("vehicle.diamondback.century")
-        spawn_point = carla.Transform(carla.Location(x=-25.661824, y=-55.620903, z=0.1), carla.Rotation(yaw=0))
+        spawn_point = carla.Transform(carla.Location(x=-25.661824, y=-55.620903, z=0.1), carla.Rotation(yaw=180))
         bike = self.world.spawn_actor(bike_bp, spawn_point)
         self.bike_location = spawn_point.location
 
         # spawn depth sensor
         depth_sensor_bp = self.bp_lib.find('sensor.camera.depth') 
         depth_sensor_bp.set_attribute("fov", "130") 
-        depth_sensor_bp.set_attribute("image_size_x", "32")
-        depth_sensor_bp.set_attribute("image_size_y", "32")
+        depth_sensor_bp.set_attribute("image_size_x", "36")
+        depth_sensor_bp.set_attribute("image_size_y", "36")
         depth_camera_init_trans = carla.Transform(carla.Location(x=0.5, z=0.95))
         depth_sensor = self.world.spawn_actor(depth_sensor_bp, depth_camera_init_trans, attach_to=bike)
         
         # initialize sensor_data
         image_w = depth_sensor_bp.get_attribute("image_size_x").as_int()
         image_h = depth_sensor_bp.get_attribute("image_size_y").as_int()
-        self.sensor_data = {'depth_image': np.zeros((image_h, image_w, 4)),
-                            'collision': False}
+        self.sensor_data = {"depth_image": np.zeros((image_h, image_w, 4)),
+                            "collision": False}
         
         depth_sensor.listen(lambda image: self.depth_callback(image, self.sensor_data))
 
         # spawn collision sensor
-        collision_sensor = self.world.spawn_actor(
-            self.world.get_blueprint_library().find('sensor.other.collision'),
-            carla.Transform(), attach_to=bike)
-        collision_sensor.listen(lambda event: self.collision_callback(event, self.sensor_data))
+        collision_sensor = self.world.spawn_actor(self.world.get_blueprint_library().find('sensor.other.collision'), carla.Transform(), attach_to=bike)
+        collision_sensor.listen(lambda event: self.collision_callback(event))
 
         return bike, depth_sensor, collision_sensor
     
@@ -173,13 +172,24 @@ class BikeEnv(gym.Env):
         data_dict["depth_image"] = np.reshape(np.copy(image.raw_data), (image.height, image.width, 4))
         self.front_camera = data_dict["depth_image"]
 
-    def collision_callback(event, data_dict):
-        data_dict["collision"] = True
+    def collision_callback(self, event):
+        self.sensor_data['collision'] = True
 
     def get_random_spawn_point(self):
-        # spawn vehicle at random location within square
-        xSpawn = random.uniform(self.XMIN, self.XMAX)
-        ySpawn = random.uniform(self.YMIN, self.YMAX)
+        # spawn vehicle at random location 
+        spawn_place = random.randint(1,4)
+        if spawn_place == 1:
+            xSpawn = random.uniform(-27, -16)
+            ySpawn = random.uniform(-122, -54)
+        elif spawn_place == 2:
+            xSpawn = random.uniform(-64, -16)
+            ySpawn = random.uniform(-125, -120)
+        elif spawn_place == 3:
+            xSpawn = random.uniform(-63, -16)
+            ySpawn = random.uniform(-72, -65)
+        elif spawn_place == 4:
+            xSpawn = random.uniform(-65, -53)
+            ySpawn = random.uniform(-97, -87)
         location = carla.Location(x=xSpawn, y=ySpawn, z=0.05)
         phiSpawn = random.uniform(-180, 180)
         rotation = carla.Rotation(pitch=0.0, yaw=phiSpawn, roll=0.0)
@@ -187,9 +197,7 @@ class BikeEnv(gym.Env):
         return random_point
     
     def get_observation(self):
-        # normiert auf Werte zw. 0 und 1
-        # Observation besteht für jeden Pixel nur aus dem ersten Wert, da sowieso alle rgb Werte gleich sind
-        observation = np.array(self.front_camera[:, :, 0], dtype=np.float32) / 255 
+        observation = np.array(self.front_camera, dtype=np.uint8)
         return observation
 
     def get_distance_to_target(self):
