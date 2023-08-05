@@ -1,0 +1,3 @@
+- Ohne Position bei der Observation
+- depth reward von -1 bis 1
+- speed penalty nur für zu langsam fahren
