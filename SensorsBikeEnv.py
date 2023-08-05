@@ -141,7 +141,7 @@ class BikeEnv(gym.Env):
     def spawn_bike(self):
         # spawn bike
         bike_bp = self.bp_lib.find("vehicle.diamondback.century")
-        spawn_point = carla.Transform(carla.Location(x=-25.661824, y=-55.620903, z=0.1), carla.Rotation(yaw=180))
+        spawn_point = self.get_random_spawn_point()
         bike = self.world.spawn_actor(bike_bp, spawn_point)
         self.bike_location = spawn_point.location
 
@@ -213,13 +213,13 @@ class BikeEnv(gym.Env):
         return carla.Location(x=xTarget, y=yTarget, z=0.0)
         
     def calculate_reward(self):
-        # reward in a range from -0.996 to 0.996 (depending on how dark/bright the depth image is)
-        depth_reward = (np.mean(self.front_camera[:, :, 0]) - 128) / 255 * 2
+        # reward in a range from 1/255 to 1 (depending on how dark/bright the depth image is)
+        depth_reward = (np.mean(self.front_camera[:, :, 0])) / 255 
                         
-        # penalty for speeds below 5kmh
+        # penalty for speeds below 5kmh and above 15kmh
         v = self.bike.get_velocity()
         kmh = int(3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2))
-        speed_penalty = -1 if kmh < 5 else 0
+        speed_penalty = -1 if kmh < 5 or kmh > 15 else 0
 
         reward = (depth_reward + speed_penalty) 
 
