@@ -23,10 +23,10 @@ import random
 class BikeEnv(gym.Env):
     """Custom Environment that follows gym interface."""
     
-    XMAX=14
-    XMIN=-8.75
-    YMAX=-129
-    YMIN=-144
+    XMAX=-10
+    XMIN=-70
+    YMAX=-5
+    YMIN=-130
     DISCOUNT = 0.99
 
     metadata = {"render_modes": ["human"], "render_fps": 30}
@@ -47,20 +47,28 @@ class BikeEnv(gym.Env):
 
         self.action_space = spaces.Box(low=low, high=high, shape=(2,), dtype=np.float32)
 
-        image_width = 800
-        image_height = 600
+        # The minimal resolution for an image is 36x36 for the default `CnnPolicy`
+        # -> otherwise custom features extractor
+        image_width = 36
+        image_height = 36
+        num_channels = 4
+        position_dimensions = 2
 
         # neural Networks prefer Inputs between 0 and 1 or -1 and 1 or sth like that -> sentdex
-        self.observation_space = spaces.Box(low=0, high=1, shape=(image_height, image_width), dtype=np.float32)
+        # CNN policy normalizes the observation automatically
+        self.observation_space = spaces.Dict({
+            "position": spaces.Box(-130, -5, shape=(2,)),
+            "image": spaces.Box(low=0, high=255, shape=(image_height, image_width, num_channels), dtype=np.uint8)
+            })
+
 
         self.client = carla.Client('localhost', 2000)
         self.client.set_timeout(20.0)
         self.world = self.client.load_world('Town03_Opt', carla.MapLayer.Buildings | carla.MapLayer.ParkedVehicles)
         time.sleep(1)
-        self.world.unload_map_layer(carla.MapLayer.All)
         self.bp_lib = self.world.get_blueprint_library()
 
-
+        self.sensor_data = {}
         self.bike, self.depth_sensor, self.collision_sensor = self.spawn_bike()
 
         # synchronous mode und Fixed time-step später wichtig für synchrone Sensoren
@@ -72,18 +80,17 @@ class BikeEnv(gym.Env):
         #self.client.reload_world(False)
 
         #position spectator
-        self.spectator = self.world.get_spectator()
-        self.spectator.set_transform(carla.Transform(carla.Location(x=7.727516, y=-117.762421, z=8.201375), carla.Rotation(pitch=-19.756622, yaw=-100.927879, roll=0.000024)))
+        spectator = self.world.get_spectator()
+        transform = carla.Transform(self.bike.get_transform().transform(carla.Location(x=-4, z=2)), self.bike.get_transform().rotation) 
+        spectator.set_transform(transform)
 
         self.front_camera=None
-        self.bike_location = self.bike.get_transform().location
-        self.target_location = self.set_new_target()
         self.done = False
         self.reward = 0
         self.tick_count = 0
         self.max_time_steps = 4000
         self.world.tick()
-        self.sensor_data = None
+        
         self.info = {"actions": []}
 
     def step(self, action):
@@ -111,15 +118,9 @@ class BikeEnv(gym.Env):
         while self.front_camera is None: 
             time.sleep(0.01) # warten bis die front camera das erste Bild liefert
 
-        # set target at random location within square
-        self.target_location = self.set_new_target()
-        self.world.debug.draw_string(self.target_location, "X", draw_shadow=False,
-                                     color=carla.Color(r=255, g=0, b=0), life_time=2,
-                                     persistent_lines=True)
-        self.prev_distance = self.get_distance_to_target()
+      
         self.done = False
         self.reward = 0
-        print("tick_count: " + str(self.tick_count))
         self.tick_count = 0
         self.info = {"actions": []}
         self.world.tick()
@@ -141,52 +142,79 @@ class BikeEnv(gym.Env):
 # ================== Hilfsmethoden ==================
 
     def spawn_bike(self):
+        # spawn bike
         bike_bp = self.bp_lib.find("vehicle.diamondback.century")
         spawn_point = self.get_random_spawn_point()
         bike = self.world.spawn_actor(bike_bp, spawn_point)
         self.bike_location = spawn_point.location
 
+        # spawn depth sensor
         depth_sensor_bp = self.bp_lib.find('sensor.camera.depth') 
-        depth_sensor_bp.set_attribute("fov", "130")
+        depth_sensor_bp.set_attribute("fov", "130") 
+        depth_sensor_bp.set_attribute("image_size_x", "36")
+        depth_sensor_bp.set_attribute("image_size_y", "36")
         depth_camera_init_trans = carla.Transform(carla.Location(x=0.5, z=0.95))
         depth_sensor = self.world.spawn_actor(depth_sensor_bp, depth_camera_init_trans, attach_to=bike)
-                    
+        
+        # initialize sensor_data
         image_w = depth_sensor_bp.get_attribute("image_size_x").as_int()
         image_h = depth_sensor_bp.get_attribute("image_size_y").as_int()
-        self.sensor_data = {'depth_image': np.zeros((image_h, image_w, 4)),
-                       'collision': False}
+        self.sensor_data = {"depth_image": np.zeros((image_h, image_w, 4)),
+                            "collision": False}
         
         depth_sensor.listen(lambda image: self.depth_callback(image, self.sensor_data))
 
-        collision_sensor = self.world.spawn_actor(
-            self.world.get_blueprint_library().find('sensor.other.collision'),
-            carla.Transform(), attach_to=bike)
-        collision_sensor.listen(lambda event: self.collision_callback(event, self.sensor_data))
+        # spawn collision sensor
+        collision_sensor = self.world.spawn_actor(self.world.get_blueprint_library().find('sensor.other.collision'), carla.Transform(), attach_to=bike)
+        collision_sensor.listen(lambda event: self.collision_callback(event))
 
         return bike, depth_sensor, collision_sensor
     
-    def collision_callback(event, data_dict):
-        data_dict["collision"] = True
 
     def depth_callback(self, image, data_dict):
         image.convert(carla.ColorConverter.LogarithmicDepth)
         data_dict["depth_image"] = np.reshape(np.copy(image.raw_data), (image.height, image.width, 4))
         self.front_camera = data_dict["depth_image"]
 
+    def collision_callback(self, event):
+        self.sensor_data['collision'] = True
+
     def get_random_spawn_point(self):
-        # spawn vehicle at random location within square
-        xSpawn = random.uniform(self.XMIN, self.XMAX)
-        ySpawn = random.uniform(self.YMIN, self.YMAX)
+        # spawn vehicle at random location 
+        spawn_place = random.randint(1,4)
+        if spawn_place == 1:
+            xSpawn = random.uniform(-27, -16)
+            ySpawn = random.uniform(-122, -54)
+        elif spawn_place == 2:
+            xSpawn = random.uniform(-64, -16)
+            ySpawn = random.uniform(-125, -120)
+        elif spawn_place == 3:
+            xSpawn = random.uniform(-63, -16)
+            ySpawn = random.uniform(-72, -65)
+        elif spawn_place == 4:
+            xSpawn = random.uniform(-65, -53)
+            ySpawn = random.uniform(-97, -87)
         location = carla.Location(x=xSpawn, y=ySpawn, z=0.05)
         phiSpawn = random.uniform(-180, 180)
         rotation = carla.Rotation(pitch=0.0, yaw=phiSpawn, roll=0.0)
         random_point = carla.Transform(location, rotation)
         return random_point
     
-   
-    
     def get_observation(self):
-        observation = np.array(self.front_camera, dtype=np.float32) / 255 #normiert auf Werte zw. 0 und 1
+        
+        get_pos = self.bike.get_transform().location
+        pos_bike = [get_pos.x, get_pos.y]
+        # x bzw. y Werte von -10 bis -70 bzw. -5 bis -130 skaliert auf 0 bis 255
+        x_scaled = (pos_bike[0] - self.XMIN) * (255 / (self.XMAX - self.XMIN)) 
+        y_scaled = (pos_bike[1] - self.YMIN) * (255 / (self.YMAX - self.YMIN)) 
+        pos_bike = [x_scaled, y_scaled]
+        pos_bike = np.array(pos_bike, dtype=np.uint8)
+        # pos_bike in die Form von front_camera bringen (für jeden Pixel einmal)
+        pos_bike = np.tile(pos_bike, (self.front_camera.shape[0], self.front_camera.shape[1], 1))
+        # pos_bike für jeden Pixel hinter rgb und alpha anhängen
+        observation = np.concatenate((self.front_camera, pos_bike), axis=-1)
+
+        observation = np.array(observation)
         return observation
 
     def get_distance_to_target(self):
@@ -202,45 +230,31 @@ class BikeEnv(gym.Env):
         return carla.Location(x=xTarget, y=yTarget, z=0.0)
         
     def calculate_reward(self):
-        current_distance = self.get_distance_to_target()
-
-        reward_for_target = 0
-        time_penalty = -1       #negative reward for every step the target was not reached
-
-        #penalty for speeds below 10kmh
+        # reward in a range from ~(-1) to ~1 (depending on how dark/bright the depth image is)
+        # so the agent wont maximize reward by driving in a circle
+        depth_reward = ((np.mean(self.front_camera[:, :, 0])) - 127) / 255 * 2 
+                        
+        # penalty for speeds below 5kmh and above 15kmh
         v = self.bike.get_velocity()
         kmh = int(3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2))
-        speed_penalty = -5 if kmh < 5 else 0
+        speed_penalty = -1 if kmh < 5 or kmh > 15 else 0
 
-        # if target reached -> reward for finding
-        # and calculate new target 
-        if current_distance < 1.0:
-            self.target_location = self.set_new_target()
-            reward_for_target = 100
-            time_penalty = 0
-            self.tick_count = 0
-            self.world.debug.draw_string(self.target_location, "X", draw_shadow=False,
-                                        color=carla.Color(r=255, g=0, b=0), life_time=2,
-                                        persistent_lines=True)
-            print("target reached")
+        reward = (depth_reward + speed_penalty) 
 
-        if self.sensor_data["collision"] == True: 
-            self.done = True
-            collision_reward = -100
-
-        reward = (self.DISCOUNT**self.tick_count) * (collision_reward + time_penalty + speed_penalty) 
-        self.prev_distance = current_distance
-        
-        # negative reward and stop episode, when leaving the square
-        if not self.is_within_boundary():
+        # negative reward and stop episode, when leaving the square or colliding
+        if not self.is_within_boundary() or self.sensor_data["collision"] == True:
             self.done = True
             reward = -100
 
+        # end episode and negative reward for taking too long (rausgenommen)
         self.world.tick()
         self.tick_count += 1
+        
+        """
         if self.tick_count >= self.max_time_steps:
             self.done = True
             reward = -100
+        """
         return reward
     
     def is_within_boundary(self):

@@ -60,8 +60,8 @@ class BikeEnv(gym.Env):
             -180,        # rotation bike 
             0            # distance 
         ])
-
-        self.observation_space = spaces.Box(low=low, high=high, shape=(6,), dtype=np.float32)
+        obs_size = len(high)
+        self.observation_space = spaces.Box(low=low, high=high, shape=(obs_size,), dtype=np.float32)
 
 
         self.client = carla.Client('localhost', 2000)
@@ -88,6 +88,9 @@ class BikeEnv(gym.Env):
         spawn_point = self.get_random_spawn_point()
         self.bike = self.world.spawn_actor(self.bike_bp, spawn_point)
         self.bike_location = spawn_point.location
+
+        self.info = {"actions": [],
+                     "target_locations": []}
         self.target_location = self.set_new_target()
         self.done = False
         self.reward = 0
@@ -95,16 +98,16 @@ class BikeEnv(gym.Env):
         self.max_time_steps = 2000
         self.world.tick()
 
-        self.info = {"actions": []}
 
     def step(self, action):
-        throttle = float((action[0] + 1)/ 2)
+        # action space von -1 bis 1 auf 0.2 bis 1 abbilden, damit er nicht stehen bleibt
+        throttle = float((action[0] + 1) * 0.4 + 0.2) 
         steer=float(action[1])
         self.bike.apply_control(carla.VehicleControl(throttle=throttle, steer=steer))
 
         # update bike_location
         self.bike_location = self.bike.get_transform().location
-        
+
         self.info["actions"].append(action.tolist())
         observation = self.get_observation()
         self.reward = self.calculate_reward()
@@ -117,6 +120,9 @@ class BikeEnv(gym.Env):
         self.bike = self.world.try_spawn_actor(self.bike_bp, spawn_point)
         self.bike_location = spawn_point.location
 
+        self.info = {"actions": [],
+                     "target_locations": []}
+
         # set target at random location within square
         self.target_location = self.set_new_target()
         self.world.debug.draw_string(self.target_location, "X", draw_shadow=False,
@@ -127,7 +133,7 @@ class BikeEnv(gym.Env):
         self.reward = 0
         print("tick_count: " + str(self.tick_count))
         self.tick_count = 0
-        self.info = {"actions": []}
+        
         self.world.tick()
         self.tick_count += 1
         return self.get_observation() #info
@@ -166,7 +172,7 @@ class BikeEnv(gym.Env):
         observated_rotation = [bike_transform.rotation.yaw]
         observated_target_location = [self.target_location.x, self.target_location.y]
         observated_dist = [self.get_distance_to_target()]
-        observation = observated_location + observated_target_location + observated_rotation + observated_dist
+        observation = observated_location + observated_target_location + observated_rotation + observated_dist 
         observation = np.array(observation, dtype=np.float32)
         return observation
 
@@ -184,45 +190,52 @@ class BikeEnv(gym.Env):
         self.world.debug.draw_string(new_target, "X", draw_shadow=False,
                                         color=carla.Color(r=255, g=0, b=0), life_time=2,
                                         persistent_lines=True)
+        self.info["target_locations"].append([xTarget, yTarget])
         return new_target
+    
+
     
     def calculate_reward(self):
         current_distance = self.get_distance_to_target()
+        # distance reward von 1/27.5 bis 1 / 3.001
+        # entspricht 0.036 bis 0.33
+        distance_reward = 1 / (current_distance + 0.01)
 
         reward_for_target = 0
-        time_penalty = -1       #negative reward for every step the target was not reached
+        time_penalty = -0.01       #negative reward for every step the target was not reached
 
-        #penalty for speeds below 10kmh
-        v = self.bike.get_velocity()
-        kmh = int(3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2))
-        speed_penalty = -5 if kmh < 5 else 0
+        #penalty for speeds below 3kmh and above 8kmh
+        # v = self.bike.get_velocity()
+        # kmh = int(3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2))
+        # speed_penalty = -1 if kmh < 3 or kmh > 8 else 0
 
         # if target reached -> reward for finding
         # and calculate new target 
-        if current_distance < 1.0:
+        if current_distance < 3.0:
             self.target_location = self.set_new_target()
-            reward_for_target = 100
+            reward_for_target = 1
             time_penalty = 0
             self.tick_count = 0
             print("target reached")
 
-        reward = (self.DISCOUNT**self.tick_count) * ((self.prev_distance - current_distance) * 1000 + reward_for_target + time_penalty + speed_penalty) 
-        self.prev_distance = current_distance
+        reward = (reward_for_target + time_penalty + distance_reward) 
         
-        # negative reward and stop episode, when leaving the square
-        if not self.is_within_boundary():
-            self.done = True
-            reward = -100
-
+        # negative reward and stop episode, when
+        # leaving the square
+        # or reaching time limit
         self.world.tick()
         self.tick_count += 1
-        if self.tick_count >= self.max_time_steps:
+        if not self.is_within_boundary() or self.tick_count >= self.max_time_steps:
             self.done = True
-            reward = -100
+            reward = -1
+
+        #if self.tick_count % 10 == 0:
+           # print("\nkmh: " + str(kmh))
+            #print("\nreward: " + str(reward))
+            #print("distance to target: " + str(current_distance))
         return reward
     
     def is_within_boundary(self):
         return self.XMIN <= self.bike_location.x <= self.XMAX and self.YMIN <= self.bike_location.y <= self.YMAX
 
     
-
