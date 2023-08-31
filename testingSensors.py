@@ -79,6 +79,9 @@ def sem_callback(image, data_dict):
     image.convert(carla.ColorConverter.CityScapesPalette)
     data_dict["sem_image"] = np.reshape(np.copy(image.raw_data), (image.height, image.width, 4))
 
+def collision_callback(event, data_dict):
+    data_dict['collision'] = True
+
 # Get camera dimensions and initialise dictionary                       
 image_w = camera_bp.get_attribute("image_size_x").as_int()
 image_h = camera_bp.get_attribute("image_size_y").as_int()

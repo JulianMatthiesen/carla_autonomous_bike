@@ -167,7 +167,6 @@ class BikeEnv(gym.Env):
 
         return bike, depth_sensor, collision_sensor
     
-
     def depth_callback(self, image, data_dict):
         image.convert(carla.ColorConverter.LogarithmicDepth)
         data_dict["depth_image"] = np.reshape(np.copy(image.raw_data), (image.height, image.width, 4))
