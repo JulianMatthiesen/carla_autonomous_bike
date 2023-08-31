@@ -44,7 +44,7 @@ class BikeEnv(gym.Env):
             -1.0,   # throttle bike
             -1.0   # steer bike
         ])
-
+#fgse
         self.action_space = spaces.Box(low=low, high=high, shape=(2,), dtype=np.float32)
 
         high = np.array([
